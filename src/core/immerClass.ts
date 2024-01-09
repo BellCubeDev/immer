@@ -34,8 +34,13 @@ interface ProducersFns {
 export class Immer implements ProducersFns {
 	autoFreeze_: boolean = true
 	useStrictShallowCopy_: boolean = false
+	allowMultiRefs_: boolean = false
 
-	constructor(config?: {autoFreeze?: boolean; useStrictShallowCopy?: boolean}) {
+	constructor(config?: {
+		autoFreeze?: boolean
+		useStrictShallowCopy?: boolean
+		allowMultiRefs: boolean
+	}) {
 		if (typeof config?.autoFreeze === "boolean")
 			this.setAutoFreeze(config!.autoFreeze)
 		if (typeof config?.useStrictShallowCopy === "boolean")
@@ -86,7 +91,10 @@ export class Immer implements ProducersFns {
 		// Only plain objects, arrays, and "immerable classes" are drafted.
 		if (isDraftable(base)) {
 			const scope = enterScope(this)
-			const proxy = createProxy(base, undefined)
+			const existingProxyMap = this.allowMultiRefs_
+				? new WeakMap<Objectish, Drafted>()
+				: undefined
+			const proxy = createProxy(base, undefined, existingProxyMap)
 			let hasError = true
 			try {
 				result = recipe(proxy)
@@ -167,6 +175,16 @@ export class Immer implements ProducersFns {
 		this.useStrictShallowCopy_ = value
 	}
 
+	/** Pass true to allow multiple references to the same object in the same state tree. */
+	setAllowMultiRefs(value: boolean) {
+		this.allowMultiRefs_ = value
+		if (this.allowMultiRefs_) {
+			this.existingProxyMap_ = new WeakMap()
+		} else {
+			this.existingProxyMap_ = null
+		}
+	}
+
 	applyPatches<T extends Objectish>(base: T, patches: Patch[]): T {
 		// If a patch replaces the entire state, take that replacement as base
 		// before applying patches
@@ -194,20 +212,30 @@ export class Immer implements ProducersFns {
 			applyPatchesImpl(draft, patches)
 		)
 	}
+
+	existingProxyMap_: WeakMap<Objectish, Drafted> | null = null
 }
 
 export function createProxy<T extends Objectish>(
 	value: T,
-	parent?: ImmerState
+	parent?: ImmerState,
+	existingProxyMap?: WeakMap<Objectish, Drafted>
 ): Drafted<T, ImmerState> {
+	if (existingProxyMap?.has(value)) {
+		return existingProxyMap.get(value)!
+	}
+
 	// precondition: createProxy should be guarded by isDraftable, so we know we can safely draft
 	const draft: Drafted = isMap(value)
 		? getPlugin("MapSet").proxyMap_(value, parent)
 		: isSet(value)
 		? getPlugin("MapSet").proxySet_(value, parent)
-		: createProxyProxy(value, parent)
+		: createProxyProxy(value, parent, existingProxyMap)
 
 	const scope = parent ? parent.scope_ : getCurrentScope()
+
 	scope.drafts_.push(draft)
+	scope.immer_.existingProxyMap_?.set(value, draft)
+
 	return draft
 }

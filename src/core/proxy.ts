@@ -33,6 +33,7 @@ export interface ProxyObjectState extends ProxyBaseState {
 	base_: any
 	copy_: any
 	draft_: Drafted<AnyObject, ProxyObjectState>
+	existingDraftMap_: WeakMap<Objectish, Drafted> | undefined
 }
 
 export interface ProxyArrayState extends ProxyBaseState {
@@ -40,6 +41,7 @@ export interface ProxyArrayState extends ProxyBaseState {
 	base_: AnyArray
 	copy_: AnyArray | null
 	draft_: Drafted<AnyArray, ProxyArrayState>
+	existingDraftMap_: WeakMap<Objectish, Drafted> | undefined
 }
 
 type ProxyState = ProxyObjectState | ProxyArrayState
@@ -51,7 +53,8 @@ type ProxyState = ProxyObjectState | ProxyArrayState
  */
 export function createProxyProxy<T extends Objectish>(
 	base: T,
-	parent?: ImmerState
+	parent?: ImmerState,
+	existingDraftMap?: WeakMap<Objectish, Drafted>
 ): Drafted<T, ProxyState> {
 	const isArray = Array.isArray(base)
 	const state: ProxyState = {
@@ -74,7 +77,8 @@ export function createProxyProxy<T extends Objectish>(
 		copy_: null,
 		// Called by the `produce` function.
 		revoke_: null as any,
-		isManual_: false
+		isManual_: false,
+		existingDraftMap_: existingDraftMap
 	}
 
 	// the traps must target something, a bit like the 'real' base.
@@ -116,7 +120,11 @@ export const objectTraps: ProxyHandler<ProxyState> = {
 		// Assigned values are never drafted. This catches any drafts we created, too.
 		if (value === peek(state.base_, prop)) {
 			prepareCopy(state)
-			return (state.copy_![prop as any] = createProxy(value, state))
+			return (state.copy_![prop as any] = createProxy(
+				value,
+				state,
+				state.existingDraftMap_
+			))
 		}
 		return value
 	},
