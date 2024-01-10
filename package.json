@@ -82,5 +82,8 @@
     "ts-jest": "^29.0.0",
     "tsup": "^6.7.0",
     "typescript": "^5.0.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
