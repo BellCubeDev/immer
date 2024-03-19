@@ -941,7 +941,9 @@ function runBaseTest(name, autoFreeze, useStrictShallowCopy, useListener) {
 					if (canReferNonEnumerableProperty) s.foo.a++
 					if (useStrictShallowCopy) expect(isEnumerable(s, "foo")).toBeFalsy()
 				})
-				if (canReferNonEnumerableProperty) expect(nextState.foo).toBeTruthy()
+				if (canReferNonEnumerableProperty) {
+					expect(nextState.foo).toEqual({a: 2})
+				}
 				if (useStrictShallowCopy)
 					expect(isEnumerable(nextState, "foo")).toBeFalsy()
 				if (useStrictShallowCopy) expect(nextState.baz).toBeTruthy()
@@ -2361,6 +2363,22 @@ function testObjectTypes(produce) {
 			[immerable]: true,
 			[customSymbol]: 3
 		})
+	})
+
+	describe("#1096 / #1087 / proxies", () => {
+		const sym = Symbol()
+
+		let state = {
+			id: 1,
+			[sym]: {x: 2}
+		}
+
+		state = produce(state, draft => {
+			draft.id = 2
+			draft[sym]
+		})
+
+		expect(state[sym].x).toBe(2)
 	})
 }
 
