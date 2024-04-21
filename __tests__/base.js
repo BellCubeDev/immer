@@ -1126,7 +1126,7 @@ function runBaseTest(name, autoFreeze, useStrictShallowCopy, useListener, allowM
 			})
 			expect(nextState).toEqual({foo: {a: true, c: true}})
 		})
-
+ 
 		it("can nest a draft in a new object (no changes)", () => {
 			const baseState = {obj: {}}
 			const nextState = produce(baseState, s => {
