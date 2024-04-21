@@ -17,7 +17,8 @@ import {
 	die,
 	createProxy,
 	ArchType,
-	ImmerScope
+	ImmerScope,
+	isDraft
 } from "../internal"
 
 interface ProxyBaseState extends ImmerBaseState {
@@ -51,14 +52,15 @@ type ProxyState = ProxyObjectState | ProxyArrayState
  */
 export function createProxyProxy<T extends Objectish>(
 	base: T,
-	parent?: ImmerState,
-	stateMap?: WeakMap<Objectish, ImmerState>
+	parent?: ImmerState
 ): Drafted<T, ProxyState> {
+	const scope_ = parent ? parent.scope_ : getCurrentScope()!
+
 	const isArray = Array.isArray(base)
-	const state: ProxyState = (stateMap?.get(base) as ProxyState) || {
+	const state: ProxyState = (scope_.existingStateMap_?.get(base) as ProxyState) || {
 		type_: isArray ? ArchType.Array : (ArchType.Object as any),
 		// Track which produce call this is associated with.
-		scope_: parent ? parent.scope_ : getCurrentScope()!,
+		scope_: scope_,
 		// True for both shallow and deep changes.
 		modified_: false,
 		// Used during finalization.
@@ -76,7 +78,6 @@ export function createProxyProxy<T extends Objectish>(
 		// Called by the `produce` function.
 		revoke_: null as any,
 		isManual_: false,
-		existingStateMap_: stateMap
 	}
 
 	if (parent && state.parent_ !== parent) {
@@ -114,6 +115,14 @@ export function createProxyProxy<T extends Objectish>(
 	return state.draft_ as any
 }
 
+function isScopeDescendedFrom(parent: ImmerScope, child: ImmerScope | undefined) {
+	while (child) {
+		if (child === parent) return true
+		child = child.parent_
+	}
+	return false
+}
+
 /**
  * Object drafts
  */
@@ -136,8 +145,7 @@ export const objectTraps: ProxyHandler<ProxyState> = {
 			prepareCopy(state)
 			return (state.copy_![prop as any] = createProxy(
 				value,
-				state,
-				state.existingStateMap_
+				state
 			))
 		}
 		return value
@@ -186,7 +194,6 @@ export const objectTraps: ProxyHandler<ProxyState> = {
 		)
 			return true
 
-		// @ts-ignore
 		state.copy_![prop] = value
 		state.assigned_[prop] = true
 		return true
@@ -245,8 +252,7 @@ each(objectTraps, (key, fn) => {
 arrayTraps.deleteProperty = function(state, prop) {
 	if (process.env.NODE_ENV !== "production" && isNaN(parseInt(prop as any)))
 		die(13)
-	// @ts-ignore
-	return arrayTraps.set!.call(this, state, prop, undefined)
+	return arrayTraps.set!.call(this, state, prop, undefined, undefined)
 }
 arrayTraps.set = function(state, prop, value) {
 	if (
@@ -308,7 +314,7 @@ export function markChanged(state: ImmerState) {
 export function prepareCopy(state: ImmerState) {
 	if (state.copy_) return
 
-	const existing = state.existingStateMap_?.get(state.base_)
+	const existing = state.scope_.existingStateMap_?.get(state.base_)
 	if (existing) {
 		Object.assign(state, existing)
 		return
@@ -319,5 +325,5 @@ export function prepareCopy(state: ImmerState) {
 		state.scope_.immer_.useStrictShallowCopy_
 	)
 
-	state.existingStateMap_?.set(state.base_, state)
+	state.scope_.existingStateMap_?.set(state.base_, state)
 }

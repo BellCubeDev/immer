@@ -15,7 +15,8 @@ import {
 	die,
 	ArchType,
 	each,
-	Objectish
+	Objectish,
+	isDraft
 } from "../internal"
 
 export function enableMapSet() {
@@ -24,16 +25,14 @@ export function enableMapSet() {
 
 		constructor(
 			target: AnyMap,
-			parent?: ImmerState,
-			stateMap:
-				| WeakMap<Objectish, ImmerState>
-				| undefined = parent?.existingStateMap_
+			parent?: ImmerState
 		) {
 			super()
 			let revoked = false
 			const this_ = this
+			const scope_ = parent ? parent.scope_ : getCurrentScope()!
 			this[DRAFT_STATE] = new Proxy(
-				(stateMap?.get(target) as MapState) || {
+				(scope_.existingStateMap_?.get(target) as MapState) || {
 					type_: ArchType.Map,
 					parent_: parent,
 					scope_: parent ? parent.scope_ : getCurrentScope()!,
@@ -45,7 +44,6 @@ export function enableMapSet() {
 					draft_: this as any,
 					isManual_: false,
 					revoked_: false,
-					existingStateMap_: parent?.existingStateMap_ as any
 				},
 				{
 					get(target, p, receiver) {
@@ -79,10 +77,24 @@ export function enableMapSet() {
 			return latest(this[DRAFT_STATE]).has(key)
 		}
 
+		isValueChanging(key: any, value: any): boolean {
+			const state: MapState = this[DRAFT_STATE]
+			if (!latest(state).has(key)) return true
+
+			const baseValue = latest(state).get(key)
+
+			if (baseValue === value) return false
+
+			if (isDraft(baseValue) && latest(baseValue[DRAFT_STATE]) === value) return false
+
+			return true
+		}
+
 		set(key: any, value: any) {
 			const state: MapState = this[DRAFT_STATE]
+			const valueState: ImmerState | false = isDraft(value) && value[DRAFT_STATE]
 			assertUnrevoked(state)
-			if (!latest(state).has(key) || latest(state).get(key) !== value) {
+			if (this.isValueChanging(key, value)) {
 				prepareMapCopy(state)
 				markChanged(state)
 				state.assigned_!.set(key, true)
@@ -142,7 +154,7 @@ export function enableMapSet() {
 				return value // either already drafted or reassigned
 			}
 			// despite what it looks, this creates a draft only once, see above condition
-			const draft = createProxy(value, state, state.existingStateMap_)
+			const draft = createProxy(value, state)
 			prepareMapCopy(state)
 			state.copy_!.set(key, draft)
 			return draft
@@ -193,39 +205,33 @@ export function enableMapSet() {
 
 	function proxyMap_<T extends AnyMap>(
 		target: T,
-		parent?: ImmerState,
-		stateMap:
-			| WeakMap<Objectish, ImmerState>
-			| undefined = parent?.existingStateMap_
+		parent?: ImmerState
 	): T {
-		// @ts-ignore
-		return new DraftMap(target, parent, stateMap)
+		return new DraftMap(target, parent) as unknown as T
 	}
 
 	function prepareMapCopy(state: MapState) {
 		if (state.copy_) return
 		state.assigned_ = new Map()
 		state.copy_ = new Map(state.base_)
-		state.existingStateMap_?.set(state.base_, state)
+		state.scope_.existingStateMap_?.set(state.base_, state)
 	}
 
 	class DraftSet extends Set {
 		[DRAFT_STATE]: SetState
 		constructor(
 			target: AnySet,
-			parent?: ImmerState,
-			stateMap:
-				| WeakMap<Objectish, ImmerState>
-				| undefined = parent?.existingStateMap_
+			parent?: ImmerState
 		) {
 			super()
 			let revoked = false
 			const this_ = this
+			const scope_ = parent ? parent.scope_ : getCurrentScope()!
 			this[DRAFT_STATE] = new Proxy(
-				(stateMap?.get(target) as SetState) || {
+				(scope_.existingStateMap_?.get(target) as SetState) || {
 					type_: ArchType.Set,
 					parent_: parent,
-					scope_: parent ? parent.scope_ : getCurrentScope()!,
+					scope_,
 					modified_: false,
 					finalized_: false,
 					copy_: undefined,
@@ -233,8 +239,7 @@ export function enableMapSet() {
 					draft_: this,
 					drafts_: new Map(),
 					revoked_: false,
-					isManual_: false,
-					existingStateMap_: parent?.existingStateMap_ as any
+					isManual_: false
 				},
 				{
 					get(target, p, receiver) {
@@ -349,28 +354,19 @@ export function enableMapSet() {
 
 	function proxySet_<T extends AnySet>(
 		target: T,
-		parent?: ImmerState,
-		stateMap:
-			| WeakMap<Objectish, ImmerState>
-			| undefined = parent?.existingStateMap_
+		parent?: ImmerState
 	): T {
-		// @ts-ignore
-		return new DraftSet(target, parent, stateMap)
+		return new DraftSet(target, parent) as unknown as T
 	}
-
-	const unusedValueSymbol = Symbol("unused")
 
 	function prepareSetCopy(state: SetState) {
 		if (state.copy_) return
 		// create drafts for all entries to preserve insertion order
 		state.copy_ = new Set()
-		// @ts-ignore
-		state.existingStateMap_?.set(state.base_, state)
+		state.scope_.existingStateMap_?.set(state.base_, state)
 		state.base_.forEach(value => {
 			if (isDraftable(value)) {
-				const draft = createProxy(value, state, state.existingStateMap_)
-				if (state.existingStateMap_)
-					draft[unusedValueSymbol] = unusedValueSymbol
+				const draft = createProxy(value, state)
 				state.drafts_.set(value, draft)
 				state.copy_!.add(draft)
 			} else {
